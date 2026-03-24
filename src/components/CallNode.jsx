@@ -2,9 +2,9 @@ import { memo } from 'react';
 import { Handle, Position } from 'reactflow';
 
 const CallNode = memo(({ data }) => {
-  const { label, callee, args, value, fnParams } = data;
+  const { callee, args, value, fnParams } = data;
 
-  // Use the connected function's param names when available; fall back to arg0, arg1, …
+  // Use connected function's param names when available; else arg0, arg1, …
   const paramNames = fnParams && fnParams.length > 0
     ? fnParams
     : (args || []).map((_, i) => `arg${i}`);
@@ -14,7 +14,7 @@ const CallNode = memo(({ data }) => {
       background: '#1e1e2e',
       border: '2px solid #059669',
       borderRadius: '8px',
-      minWidth: '190px',
+      minWidth: '170px',
       fontFamily: 'monospace',
       fontSize: '12px',
       color: '#e2e8f0',
@@ -25,17 +25,14 @@ const CallNode = memo(({ data }) => {
         background: '#059669',
         padding: '6px 10px',
         borderRadius: '6px 6px 0 0',
-        fontSize: '12px',
+        fontSize: '13px',
+        fontWeight: 'bold',
         display: 'flex',
         alignItems: 'baseline',
         gap: '4px',
-        flexWrap: 'wrap',
       }}>
-        <span style={{ opacity: 0.75, fontSize: '10px' }}>let</span>
-        <span style={{ fontWeight: 'bold' }}>{label}</span>
-        <span style={{ opacity: 0.75 }}>=</span>
-        <span style={{ color: '#a7f3d0', fontWeight: 'bold' }}>{callee}</span>
-        <span style={{ opacity: 0.75 }}>(…)</span>
+        <span style={{ color: '#a7f3d0' }}>{callee}</span>
+        <span style={{ opacity: 0.75, fontSize: '11px' }}>(…)</span>
       </div>
 
       {/* Function input row */}
@@ -59,7 +56,7 @@ const CallNode = memo(({ data }) => {
       {/* Argument rows */}
       {paramNames.map((param, i) => {
         const arg = (args || [])[i];
-        const isIdent = arg && arg.kind === 'identifier';
+        const isConnectable = arg && (arg.kind === 'identifier' || arg.kind === 'expression');
         const argVal = arg ? arg.value : '?';
         return (
           <div key={i} style={{
@@ -68,16 +65,17 @@ const CallNode = memo(({ data }) => {
             padding: '4px 10px 4px 16px',
             position: 'relative',
           }}>
-            {isIdent && (
-              <Handle
-                type="target"
-                position={Position.Left}
-                id={`arg-${i}`}
-                style={{ top: 'auto', left: -8, background: '#0ea5e9', width: 10, height: 10 }}
-              />
-            )}
+            {/* Always show input handle for each arg */}
+            <Handle
+              type="target"
+              position={Position.Left}
+              id={`arg-${i}`}
+              style={{ top: 'auto', left: -8, background: '#0ea5e9', width: 10, height: 10 }}
+            />
             <span style={{ fontSize: '10px', color: '#6b7280', marginRight: '4px' }}>{param}:</span>
-            <span style={{ color: isIdent ? '#7dd3fc' : '#94a3b8' }}>{argVal}</span>
+            <span style={{ color: isConnectable ? '#7dd3fc' : '#94a3b8', fontSize: '11px' }}>
+              {argVal}
+            </span>
           </div>
         );
       })}
@@ -90,7 +88,7 @@ const CallNode = memo(({ data }) => {
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <span style={{ color: '#6b7280', fontSize: '10px' }}>value</span>
+        <span style={{ color: '#6b7280', fontSize: '10px' }}>result</span>
         <span style={{
           color: '#34d399',
           fontWeight: 'bold',
