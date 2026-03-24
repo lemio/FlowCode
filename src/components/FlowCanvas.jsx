@@ -62,11 +62,11 @@ export default function FlowCanvas({ parsedNodes, parsedEdges, viewport, binding
         return existing ? { ...n, position: existing.position } : n;
       });
     });
-  }, [parsedNodes, bindings]);
+  }, [parsedNodes, bindings, setNodes]);
 
   useEffect(() => {
     setEdges(buildFlowEdges(parsedEdges));
-  }, [parsedEdges]);
+  }, [parsedEdges, setEdges]);
 
   const onNodeDragStop = useCallback((event, node) => {
     onNodePositionChange && onNodePositionChange(node.id, node.position.x, node.position.y);

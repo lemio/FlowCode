@@ -33,7 +33,7 @@ function instrumentSource(source) {
   const lines = source.split('\n');
   const processed = lines.map((line, i) => {
     // Strip trailing position comments so they don't interfere
-    return line.replace(/\/\/\s*-?\d+.*$/, '// stripped');
+    return line.replace(/\/\/\s*-?\d+.*$/, '');
   });
   return processed.join('\n');
 }
