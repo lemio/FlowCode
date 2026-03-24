@@ -34,8 +34,12 @@ function getTrailingComment(sourceLines, line) {
  * Parse the source code and return:
  * { nodes, edges, viewport, error }
  *
- * Node shape: { id, type: 'function'|'variable'|'call', label, params, x, y, value }
- * Edge shape: { id, source, target, label }
+ * Node shapes:
+ *   function: { id, type:'function', label, params, bodyLines, x, y }
+ *   variable: { id, type:'variable', label, x, y, init }
+ *   call:     { id, type:'call', label, callee, args:[{kind,value}], x, y }
+ *
+ * Edge shape: { id, source, target, sourceHandle, targetHandle, label, animated, edgeType }
  * Viewport: { x, y, w, h } or null
  */
 export function parseCode(source) {
@@ -84,56 +88,95 @@ export function parseCode(source) {
       const comment = getTrailingComment(lines, startLine);
       const pos = parsePositionComment(comment);
 
+      // Extract each body statement as a text snippet for visual display
+      const bodyLines = node.body.body.map(stmt => {
+        const text = source.slice(stmt.start, stmt.end).trim();
+        return text.length > 58 ? text.slice(0, 55) + '…' : text;
+      });
+
       const n = {
         id: name,
         type: 'function',
         label: name,
         params,
+        bodyLines,
         x: pos ? pos.x : 100 + nodes.length * 220,
         y: pos ? pos.y : 150,
-        value: null,
       };
       nodes.push(n);
       nodeMap[name] = n;
     },
 
     VariableDeclaration(path) {
-      const decls = path.node.declarations;
-      decls.forEach(decl => {
+      // Only handle top-level declarations; variables inside functions are shown in the function node body
+      if (path.parent.type !== 'Program') return;
+
+      path.node.declarations.forEach(decl => {
         if (!decl.id || decl.id.type !== 'Identifier') return;
         const name = decl.id.name;
 
-        // trailing comment on the declaration line
         const startLine = path.node.loc.start.line;
         const comment = getTrailingComment(lines, startLine);
         const pos = parsePositionComment(comment);
+        const x = pos ? pos.x : 400 + nodes.length * 220;
+        const y = pos ? pos.y : 350;
 
-        const n = {
-          id: name,
-          type: 'variable',
-          label: name,
-          params: [],
-          x: pos ? pos.x : 400 + nodes.length * 220,
-          y: pos ? pos.y : 350,
-          value: null,
-          init: decl.init ? source.slice(decl.init.start, decl.init.end) : undefined,
-        };
-        nodes.push(n);
-        nodeMap[name] = n;
-
-        // If init is a call expression, create edge from callee
         if (decl.init && decl.init.type === 'CallExpression') {
-          const callee = decl.init.callee;
-          const calleeName = callee.type === 'Identifier' ? callee.name : null;
-          if (calleeName && nodeMap[calleeName]) {
+          // ── CALL NODE: let name = callee(arg0, arg1, …) ──────────────────
+          const calleeNode = decl.init.callee;
+          const calleeName = calleeNode.type === 'Identifier'
+            ? calleeNode.name
+            : source.slice(calleeNode.start, calleeNode.end);
+
+          const args = decl.init.arguments.map(arg => {
+            if (arg.type === 'Identifier') return { kind: 'identifier', value: arg.name };
+            return { kind: 'literal', value: source.slice(arg.start, arg.end) };
+          });
+
+          const n = { id: name, type: 'call', label: name, callee: calleeName, args, x, y };
+          nodes.push(n);
+          nodeMap[name] = n;
+
+          // Edge: function definition → call node (via fn handle)
+          if (nodeMap[calleeName]) {
             edges.push({
               id: `e${edgeCounter++}`,
               source: calleeName,
               target: name,
+              sourceHandle: 'output',
+              targetHandle: 'fn',
               label: '',
-              animated: true,
+              animated: false,
+              edgeType: 'fn',
             });
           }
+
+          // Edges: identifier args → call node (via arg-N handle)
+          args.forEach((arg, i) => {
+            if (arg.kind === 'identifier' && nodeMap[arg.value]) {
+              edges.push({
+                id: `e${edgeCounter++}`,
+                source: arg.value,
+                target: name,
+                sourceHandle: 'output',
+                targetHandle: `arg-${i}`,
+                label: '',
+                animated: true,
+                edgeType: 'arg',
+              });
+            }
+          });
+        } else {
+          // ── PLAIN VARIABLE NODE ───────────────────────────────────────────
+          const n = {
+            id: name,
+            type: 'variable',
+            label: name,
+            x, y,
+            init: decl.init ? source.slice(decl.init.start, decl.init.end) : undefined,
+          };
+          nodes.push(n);
+          nodeMap[name] = n;
         }
       });
     },

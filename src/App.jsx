@@ -6,18 +6,39 @@ import { evaluateCode } from './utils/codeEvaluator';
 import './App.css';
 
 const DEFAULT_CODE = `//0,0,900,600 viewport
-function fibonacci(n) { //100,80 fibonacci
+let number=3; //148,287
+
+function fibonacci(n) { //162,168
   if (n <= 1) return n;
   return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-let result = fibonacci(10); //500,80 result
-let result2 = fibonacci(7); //500,220 result2
+let result = fibonacci(number); //484,22
+let result2 = fibonacci(7); //535,211
 let result3 = fibonacci(5); //500,360 result3
 `;
 
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Update the //x,y part of a trailing position comment in `line`,
+ * preserving any freetext that follows (e.g. " result3").
+ * Uses lastIndexOf('//') so it won't confuse http:// inside strings.
+ */
+function updatePositionComment(line, x, y) {
+  const lastSlash = line.lastIndexOf('//');
+  if (lastSlash !== -1) {
+    const comment = line.slice(lastSlash);
+    const posMatch = comment.match(/^\/\/\s*(-?\d[\d.]*)\s*,\s*(-?\d[\d.]*)([\s,].*)?$/);
+    if (posMatch) {
+      const freetext = posMatch[3] || '';
+      return `${line.slice(0, lastSlash)}//${Math.round(x)},${Math.round(y)}${freetext}`;
+    }
+  }
+  // No existing position comment — append one
+  return `${line.trimEnd()} //${Math.round(x)},${Math.round(y)}`;
 }
 
 export default function App() {
@@ -46,14 +67,10 @@ export default function App() {
     const currentCode = editorRef.current ? editorRef.current.getValue() : DEFAULT_CODE;
     const lines = currentCode.split('\n');
     const updated = lines.map(line => {
-      const fnMatch = line.match(new RegExp(`^(\\s*(?:function|async function)\\s+${escapeRegex(nodeId)}\\s*\\([^)]*\\)\\s*\\{)\\s*(//.*)?$`));
-      if (fnMatch) {
-        return `${fnMatch[1]} //${Math.round(x)},${Math.round(y)}`;
-      }
-      const varMatch = line.match(new RegExp(`^(\\s*(?:let|const|var)\\s+${escapeRegex(nodeId)}\\b.*)\\s*(//.*)?$`));
-      if (varMatch) {
-        const base = varMatch[1].replace(/\s*\/\/.*$/, '').trimEnd();
-        return `${base}; //${Math.round(x)},${Math.round(y)}`;
+      const isFnDecl = new RegExp(`^\\s*(?:async\\s+)?function\\s+${escapeRegex(nodeId)}\\s*\\(`).test(line);
+      const isVarDecl = new RegExp(`^\\s*(?:let|const|var)\\s+${escapeRegex(nodeId)}\\b`).test(line);
+      if (isFnDecl || isVarDecl) {
+        return updatePositionComment(line, x, y);
       }
       return line;
     });
