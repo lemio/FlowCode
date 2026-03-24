@@ -4,20 +4,14 @@
  */
 export function evaluateCode(source) {
   try {
-    const bindings = {};
-    // Create a sandboxed function that captures variable assignments
-    // We instrument the code slightly to capture top-level variable values
-    
-    // Use Function constructor for sandboxed eval
+    const instrumented = instrumentSource(source);
     const captureCode = `
-      const __bindings = {};
-      const __capture = (name, val) => { __bindings[name] = val; return val; };
-      ${instrumentSource(source)}
-      return __bindings;
+      const __b = {};
+      const __c = (n, v) => { __b[n] = v; return v; };
+      ${instrumented}
+      return __b;
     `;
-    // eslint-disable-next-line no-new-func
-    const fn = new Function(captureCode);
-    const result = fn();
+    const result = new Function(captureCode)();
     return { bindings: result || {}, error: null };
   } catch (err) {
     return { bindings: {}, error: err.message };
@@ -25,15 +19,31 @@ export function evaluateCode(source) {
 }
 
 /**
- * Simple instrumentation: wrap top-level variable declarations to capture values.
- * This is a best-effort approach using regex-based transformation.
+ * Instrument source:
+ * 1. Strip viewport/position comments (//digits,...) 
+ * 2. Wrap top-level variable declarations to capture values:
+ *    let x = EXPR;  →  let x = __c('x', EXPR);
  */
 function instrumentSource(source) {
-  // Remove the viewport comment on the first line (starts with //)
-  const lines = source.split('\n');
-  const processed = lines.map((line, i) => {
-    // Strip trailing position comments so they don't interfere
-    return line.replace(/\/\/\s*-?\d+.*$/, '');
-  });
-  return processed.join('\n');
+  let lines = source.split('\n');
+
+  // First line may be viewport comment - replace with blank
+  if (lines.length > 0 && /^\s*\/\/\s*-?\d/.test(lines[0])) {
+    lines[0] = '';
+  }
+
+  return lines.map(line => {
+    // Strip trailing position comments: //digits,digits...
+    const stripped = line.replace(/\s*\/\/\s*-?\d[\d.,\s\w]*$/, '');
+
+    // Match: optional-whitespace (let|const|var) NAME = REST;
+    const m = stripped.match(/^(\s*)(let|const|var)(\s+)([A-Za-z_$][A-Za-z0-9_$]*)(\s*=\s*)(.+?)(;?\s*)$/);
+    if (m) {
+      const [, indent, kw, sp, name, eq, expr, semi] = m;
+      // Wrap the expr in __c('name', expr)
+      return `${indent}${kw}${sp}${name}${eq}__c('${name}', ${expr})${semi || ';'}`;
+    }
+    return stripped;
+  }).join('\n');
 }
+

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -46,11 +46,8 @@ function buildFlowEdges(parsedEdges) {
 }
 
 export default function FlowCanvas({ parsedNodes, parsedEdges, viewport, bindings, onNodePositionChange }) {
-  const initialNodes = useMemo(() => buildFlowNodes(parsedNodes, bindings), []);
-  const initialEdges = useMemo(() => buildFlowEdges(parsedEdges), []);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState(buildFlowNodes(parsedNodes, bindings));
+  const [edges, setEdges, onEdgesChange] = useEdgesState(buildFlowEdges(parsedEdges));
 
   // Sync when parsed data changes
   useEffect(() => {

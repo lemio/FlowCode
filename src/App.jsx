@@ -16,8 +16,11 @@ let result2 = fibonacci(7); //500,220 result2
 let result3 = fibonacci(5); //500,360 result3
 `;
 
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export default function App() {
-  const [code, setCode] = useState(DEFAULT_CODE);
   const [parsed, setParsed] = useState(() => parseCode(DEFAULT_CODE));
   const [bindings, setBindings] = useState(() => evaluateCode(DEFAULT_CODE).bindings);
   const [parseError, setParseError] = useState(null);
@@ -25,7 +28,6 @@ export default function App() {
   const editorRef = useRef(null);
 
   const handleCodeChange = useCallback((value) => {
-    setCode(value);
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       const result = parseCode(value);
@@ -41,32 +43,29 @@ export default function App() {
   }, []);
 
   const handleNodePositionChange = useCallback((nodeId, x, y) => {
-    setCode(prevCode => {
-      const lines = prevCode.split('\n');
-      const updated = lines.map(line => {
-        const fnMatch = line.match(new RegExp(`^(\\s*(?:function|async function)\\s+${escapeRegex(nodeId)}\\s*\\([^)]*\\)\\s*\\{)\\s*(//.*)?$`));
-        if (fnMatch) {
-          return `${fnMatch[1]} //${Math.round(x)},${Math.round(y)}`;
-        }
-        const varMatch = line.match(new RegExp(`^(\\s*(?:let|const|var)\\s+${escapeRegex(nodeId)}\\b.*)\\s*(//.*)?$`));
-        if (varMatch) {
-          const base = varMatch[1].replace(/\s*\/\/.*$/, '').trimEnd();
-          return `${base}; //${Math.round(x)},${Math.round(y)}`;
-        }
-        return line;
-      });
-      const newCode = updated.join('\n');
-      const result = parseCode(newCode);
-      if (!result.error) {
-        setParsed(result);
+    const currentCode = editorRef.current ? editorRef.current.getValue() : DEFAULT_CODE;
+    const lines = currentCode.split('\n');
+    const updated = lines.map(line => {
+      const fnMatch = line.match(new RegExp(`^(\\s*(?:function|async function)\\s+${escapeRegex(nodeId)}\\s*\\([^)]*\\)\\s*\\{)\\s*(//.*)?$`));
+      if (fnMatch) {
+        return `${fnMatch[1]} //${Math.round(x)},${Math.round(y)}`;
       }
-      return newCode;
+      const varMatch = line.match(new RegExp(`^(\\s*(?:let|const|var)\\s+${escapeRegex(nodeId)}\\b.*)\\s*(//.*)?$`));
+      if (varMatch) {
+        const base = varMatch[1].replace(/\s*\/\/.*$/, '').trimEnd();
+        return `${base}; //${Math.round(x)},${Math.round(y)}`;
+      }
+      return line;
     });
+    const newCode = updated.join('\n');
+    if (editorRef.current) {
+      editorRef.current.setValue(newCode);
+    }
+    const result = parseCode(newCode);
+    if (!result.error) {
+      setParsed(result);
+    }
   }, []);
-
-  function escapeRegex(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
 
   return (
     <div style={{
