@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import FlowCanvas from './components/FlowCanvas';
 import { parseCode } from './utils/codeParser';
-import { updateVariableInit } from './utils/codeGenerator';
+import { updateVariableInit, updateCallArg, updateCallCallee } from './utils/codeGenerator';
 import './App.css';
 
 const DEFAULT_CODE = `//0,0,1200,700 viewport
@@ -159,25 +159,51 @@ export default function App() {
     triggerEval(newCode);
   }, [addDebug, triggerEval]);
 
-  // ── Edge reconnect (drag edge to new target) ──────────────────────────────
+  // ── Edge reconnect (drag edge endpoint to new node) ──────────────────────
   const handleEdgeReconnect = useCallback((oldEdge, newConnection) => {
     const currentCode = editorRef.current ? editorRef.current.getValue() : DEFAULT_CODE;
+
+    // Resolve the new source identifier (strip __call_ prefix when present)
     const newSource = newConnection.source?.startsWith('__call_')
       ? newConnection.source.slice(7)
       : newConnection.source;
 
-    if (newConnection.targetHandle === 'input' && newConnection.target) {
-      const newCode = updateVariableInit(currentCode, newConnection.target, newSource);
-      if (newCode !== currentCode) {
-        if (editorRef.current) editorRef.current.setValue(newCode);
-        const result = parseCode(newCode);
-        if (!result.error) setParsed(result);
-        triggerEval(newCode);
-        addDebug('reconnect', `Reconnected: let ${newConnection.target} = ${newSource}`);
-      }
+    // Resolve the call variable name from the target (strip __call_ prefix)
+    const rawTarget = newConnection.target ?? '';
+    const targetCallVar = rawTarget.startsWith('__call_') ? rawTarget.slice(7) : null;
+
+    const tHandle = newConnection.targetHandle ?? '';
+    let newCode = currentCode;
+    let debugMsg = null;
+
+    if (tHandle === 'input') {
+      // ── Variable ← new source ───────────────────────────────────────────
+      newCode = updateVariableInit(currentCode, rawTarget, newSource);
+      debugMsg = `Reconnected: let ${rawTarget} = ${newSource}`;
+
+    } else if (tHandle.startsWith('arg-') && targetCallVar) {
+      // ── Function-call argument ← new source ─────────────────────────────
+      const argIndex = parseInt(tHandle.slice(4), 10);
+      newCode = updateCallArg(currentCode, targetCallVar, argIndex, newSource);
+      debugMsg = `Reconnected arg${argIndex} of ${targetCallVar}(…) → ${newSource}`;
+
+    } else if (tHandle === 'fn' && targetCallVar) {
+      // ── Function-call callee ← new function ─────────────────────────────
+      newCode = updateCallCallee(currentCode, targetCallVar, newSource);
+      debugMsg = `Reconnected callee of ${targetCallVar}(…) → ${newSource}`;
+
     } else {
-      addDebug('reconnect', `Reconnected ${oldEdge.source} → ${newConnection.target} (handle: ${newConnection.targetHandle})`);
+      addDebug('reconnect', `Reconnected ${oldEdge.source} → ${rawTarget} (handle: ${tHandle})`);
+      return;
     }
+
+    if (newCode !== currentCode) {
+      if (editorRef.current) editorRef.current.setValue(newCode);
+      const result = parseCode(newCode);
+      if (!result.error) setParsed(result);
+      triggerEval(newCode);
+    }
+    if (debugMsg) addDebug('reconnect', debugMsg);
   }, [addDebug, triggerEval]);
 
   // ── Edge delete ───────────────────────────────────────────────────────────
