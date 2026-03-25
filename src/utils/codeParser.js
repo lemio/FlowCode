@@ -56,17 +56,39 @@ function collectIdentifiers(node) {
   return [...found];
 }
 
+// ── Layout constants for function sub-flow bodies ─────────────────────────
+const FN_HEADER_H = 34;   // px height of the function header bar
+const FN_PAD_TOP  = 12;   // px gap below header before first body node
+const FN_PAD_SIDE = 16;   // px left/right padding inside function container
+const FN_PAD_BOT  = 18;   // px padding below last body node
+const PARAM_ROW_H = 36;   // px height reserved for the parameter row
+const STMT_H      = 38;   // px height per statement slot
+const FN_W        = 310;  // px default width of function container
+// x offset for then/else branches (right column inside function):
+const BRANCH_X_OFFSET = 160;
+
+/**
+ * Helper: get statement list from a node that may be a BlockStatement or a
+ * single statement.
+ */
+function getStmts(node) {
+  if (!node) return [];
+  return node.type === 'BlockStatement' ? node.body : [node];
+}
+
 /**
  * Parse the source code and return:
  *   { nodes, edges, viewport, error }
  *
  * Node types:
- *   function   – { id, type:'function', label, params, bodyNodes, bodyEdges, x, y }
+ *   function   – { id, type:'function', label, params, width, height, x, y }
+ *   bodyNode   – { id, type:'bodyNode', stmtType, label, parentNode, x, y }
+ *               id pattern: __fn_<funcName>_<suffix>
  *   variable   – { id, type:'variable', label, init, initKind, x, y }
  *   call       – { id, type:'call', label, callee, args, x, y }
- *               id is always `__call_<varName>` (virtual – shares the code line with variable)
+ *               id always `__call_<varName>`
  *   expression – { id, type:'expression', label, expression, identifiers, x, y }
- *               id is `__expr_<varName>_arg<N>` or `__expr_<varName>`
+ *               id `__expr_<varName>_arg<N>` or `__expr_<varName>`
  *
  * Edge shape: { id, source, target, sourceHandle, targetHandle, label, animated, edgeType }
  * Viewport:  { x, y, w, h } or null
@@ -97,7 +119,6 @@ export function parseCode(source) {
   const edges = [];
   const nodeMap = {};
   let edgeCounter = 0;
-  // Fallback auto-layout x counter (used only when no //x,y comment present)
   let autoX = 100;
 
   function nextAutoX() {
@@ -106,7 +127,6 @@ export function parseCode(source) {
     return x;
   }
 
-  // ── Helper: push a node and register it ──────────────────────────────────
   function addNode(n) {
     nodes.push(n);
     nodeMap[n.id] = n;
@@ -131,45 +151,113 @@ export function parseCode(source) {
       const comment = getTrailingComment(lines, node.loc.start.line);
       const pos = parsePositionComment(comment);
 
-      // Build mini-diagram nodes/edges for the function body
-      const bodyNodes = [];
-      const bodyEdges = [];
+      // ── Pre-calculate body node layout ───────────────────────────────────
+      const bodyNodeData = [];
+      let bodyY = FN_HEADER_H + FN_PAD_TOP;
+      const hasParams = params.length > 0;
 
-      // Param nodes (row at the top)
-      params.forEach((param, i) => {
-        bodyNodes.push({ id: `param_${param}`, type: 'param', label: param, x: 20 + i * 90, y: 8 });
-      });
-
-      // Statement nodes (stacked below params)
-      node.body.body.forEach((stmt, i) => {
-        const text = source.slice(stmt.start, stmt.end).trim();
-        const short = text.length > 42 ? text.slice(0, 39) + '…' : text;
-        let stmtType = 'statement';
-        if (stmt.type === 'IfStatement') stmtType = 'if';
-        else if (stmt.type === 'ReturnStatement') stmtType = 'return';
-        const stmtId = `stmt_${i}`;
-        bodyNodes.push({ id: stmtId, type: stmtType, label: short, x: 20, y: 46 + i * 40 });
-        if (i > 0) {
-          bodyEdges.push({ id: `be_${i}`, source: `stmt_${i - 1}`, target: stmtId });
-        }
-      });
-      // Connect params to first statement
-      if (params.length > 0 && bodyNodes.some(n => n.id === 'stmt_0')) {
-        params.forEach((_, pi) => {
-          bodyEdges.push({ id: `be_p${pi}`, source: `param_${params[pi]}`, target: 'stmt_0' });
+      // Param nodes (top row)
+      if (hasParams) {
+        const spacing = Math.floor((FN_W - FN_PAD_SIDE * 2) / params.length);
+        params.forEach((param, i) => {
+          bodyNodeData.push({
+            id: `__fn_${name}_p${i}`,
+            type: 'bodyNode',
+            label: param,
+            stmtType: 'param',
+            parentNode: name,
+            x: FN_PAD_SIDE + i * spacing,
+            y: bodyY,
+          });
         });
+        bodyY += PARAM_ROW_H;
       }
 
+      // Statement nodes
+      node.body.body.forEach((stmt, i) => {
+        const raw = source.slice(stmt.start, stmt.end).trim();
+
+        if (stmt.type === 'IfStatement') {
+          // ── Condition node ───────────────────────────────────────────────
+          const condRaw = source.slice(stmt.test.start, stmt.test.end).trim();
+          const condLabel = condRaw.length > 22 ? condRaw.slice(0, 19) + '…' : condRaw;
+          bodyNodeData.push({
+            id: `__fn_${name}_s${i}`,
+            type: 'bodyNode',
+            label: `if (${condLabel})`,
+            stmtType: 'if',
+            parentNode: name,
+            x: FN_PAD_SIDE,
+            y: bodyY,
+          });
+
+          // ── Then branch – right column (x = FN_PAD_SIDE + BRANCH_X_OFFSET) ─
+          const thenStmts = getStmts(stmt.consequent);
+          thenStmts.forEach((cs, ci) => {
+            const t = source.slice(cs.start, cs.end).trim();
+            const ts = t.length > 24 ? t.slice(0, 21) + '…' : t;
+            bodyNodeData.push({
+              id: `__fn_${name}_s${i}_t${ci}`,
+              type: 'bodyNode',
+              label: ts,
+              stmtType: cs.type === 'ReturnStatement' ? 'return' : 'stmt',
+              parentNode: name,
+              x: FN_PAD_SIDE + BRANCH_X_OFFSET,
+              y: bodyY + ci * STMT_H,
+            });
+          });
+
+          // ── Else branch – below then, same right column ──────────────────
+          if (stmt.alternate) {
+            const elseStmts = getStmts(stmt.alternate);
+            elseStmts.forEach((as, ai) => {
+              const t = source.slice(as.start, as.end).trim();
+              const ts = t.length > 24 ? t.slice(0, 21) + '…' : t;
+              bodyNodeData.push({
+                id: `__fn_${name}_s${i}_e${ai}`,
+                type: 'bodyNode',
+                label: ts,
+                stmtType: as.type === 'ReturnStatement' ? 'return' : 'stmt',
+                parentNode: name,
+                x: FN_PAD_SIDE + BRANCH_X_OFFSET,
+                y: bodyY + thenStmts.length * STMT_H + ai * STMT_H,
+              });
+            });
+          }
+
+          bodyY += STMT_H;
+        } else {
+          // ── Regular statement ────────────────────────────────────────────
+          const short = raw.length > 38 ? raw.slice(0, 35) + '…' : raw;
+          bodyNodeData.push({
+            id: `__fn_${name}_s${i}`,
+            type: 'bodyNode',
+            label: short,
+            stmtType: stmt.type === 'ReturnStatement' ? 'return' : 'stmt',
+            parentNode: name,
+            x: FN_PAD_SIDE,
+            y: bodyY,
+          });
+          bodyY += STMT_H;
+        }
+      });
+
+      const fnHeight = bodyY + FN_PAD_BOT;
+
+      // ── Add function container FIRST (parent must precede children) ───────
       addNode({
         id: name,
         type: 'function',
         label: name,
         params,
-        bodyNodes,
-        bodyEdges,
+        width: FN_W,
+        height: fnHeight,
         x: pos ? pos.x : nextAutoX(),
         y: pos ? pos.y : 150,
       });
+
+      // ── Then add body nodes ───────────────────────────────────────────────
+      bodyNodeData.forEach(n => addNode(n));
     },
 
     // ── VARIABLE DECLARATIONS ──────────────────────────────────────────────
@@ -202,7 +290,7 @@ export function parseCode(source) {
             if (isSimpleArg(arg)) {
               return { kind: 'literal', value: source.slice(arg.start, arg.end) };
             }
-            // Complex expression ─────────────────────────────────────────
+            // Complex expression
             const exprId = `__expr_${name}_arg${i}`;
             const exprText = source.slice(arg.start, arg.end);
             const identifiers = collectIdentifiers(arg).filter(id => nodeMap[id]);
@@ -220,7 +308,7 @@ export function parseCode(source) {
             return { kind: 'expression', value: exprId, exprText };
           });
 
-          // Call node – positioned to the LEFT of the variable node (data flows left→right)
+          // Call node – left of variable node
           addNode({
             id: callId,
             type: 'call',
@@ -231,7 +319,7 @@ export function parseCode(source) {
             y: baseY,
           });
 
-          // Variable node (stores the call result)
+          // Variable node (stores result)
           addNode({
             id: name,
             type: 'variable',
@@ -242,14 +330,14 @@ export function parseCode(source) {
             y: baseY,
           });
 
-          // Edge: call → variable (result binding)
+          // Edge: call → variable
           addEdge({
             source: callId, target: name,
             sourceHandle: 'output', targetHandle: 'input',
             label: '', animated: true, edgeType: 'call-result',
           });
 
-          // Edge: function definition → call node
+          // Edge: function def → call node
           if (nodeMap[calleeName]) {
             addEdge({
               source: calleeName, target: callId,
@@ -272,7 +360,6 @@ export function parseCode(source) {
                 sourceHandle: 'output', targetHandle: `arg-${i}`,
                 label: '', animated: true, edgeType: 'expr-arg',
               });
-              // Edges: identifiers in expression → expression node
               const exprN = nodeMap[arg.value];
               if (exprN) {
                 exprN.identifiers.forEach((ident, j) => {
@@ -315,7 +402,6 @@ export function parseCode(source) {
           });
 
           if (isComplex) {
-            // Create expression node for complex variable init
             const exprId = `__expr_${name}`;
             const identifiers = collectIdentifiers(decl.init).filter(id => nodeMap[id]);
             addNode({
@@ -345,3 +431,4 @@ export function parseCode(source) {
 
   return { nodes, edges, viewport, error: null };
 }
+
